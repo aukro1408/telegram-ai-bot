@@ -28,7 +28,7 @@ def webhook():
                 "Content-Type": "application/json"
             },
             json={
-                "model": "deepseek/deepseek-chat-v3-0324:free",
+                "model": "deepseek/deepseek-v4-flash:free",
                 "messages": [
                     {
                         "role": "user",
@@ -57,6 +57,8 @@ def webhook():
 
     except Exception as e:
 
+        print(e)
+
         requests.post(
             f"{API_URL}/sendMessage",
             json={
@@ -64,8 +66,6 @@ def webhook():
                 "text": f"Error: {str(e)}"
             }
         )
-
-        print(e)
 
     return "ok"
 
