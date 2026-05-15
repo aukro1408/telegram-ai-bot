@@ -28,7 +28,7 @@ def webhook():
                 "Content-Type": "application/json"
             },
             json={
-                "model": "deepseek/deepseek-r1:free",
+                "model": "mistralai/mistral-7b-instruct:free",
                 "messages": [
                     {
                         "role": "user",
@@ -40,7 +40,12 @@ def webhook():
 
         result = response.json()
 
-        answer = result["choices"][0]["message"]["content"]
+        print(result)
+
+        if "choices" in result:
+            answer = result["choices"][0]["message"]["content"]
+        else:
+            answer = str(result)
 
         requests.post(
             f"{API_URL}/sendMessage",
