@@ -9,8 +9,12 @@ OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-@app.route("/", methods=["POST"])
+@app.route("/", methods=["GET", "POST"])
 def webhook():
+
+    if request.method == "GET":
+        return "Bot is running!"
+
     data = request.json
 
     try:
@@ -24,14 +28,19 @@ def webhook():
                 "Content-Type": "application/json"
             },
             json={
-                "model": "deepseek/deepseek-chat-v3-0324:free",
+                "model": "deepseek/deepseek-r1:free",
                 "messages": [
-                    {"role": "user", "content": message}
+                    {
+                        "role": "user",
+                        "content": message
+                    }
                 ]
             }
         )
 
-        answer = response.json()["choices"][0]["message"]["content"]
+        result = response.json()
+
+        answer = result["choices"][0]["message"]["content"]
 
         requests.post(
             f"{API_URL}/sendMessage",
@@ -42,10 +51,19 @@ def webhook():
         )
 
     except Exception as e:
+
+        requests.post(
+            f"{API_URL}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": f"Error: {str(e)}"
+            }
+        )
+
         print(e)
 
     return "ok"
 
-@app.route("/")
-def home():
-    return "Bot is running!"
+@app.route("/health")
+def health():
+    return "ok"
