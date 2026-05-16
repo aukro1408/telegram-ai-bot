@@ -12,7 +12,7 @@ PASSWORD = os.environ["BOT_PASSWORD"]
 bot = Bot(token=TOKEN)
 app = Flask(__name__)
 
-dispatcher = Dispatcher(bot, None, workers=0)
+dispatcher = Dispatcher(bot, None, workers=1)
 
 authorized_users = set()
 
@@ -29,7 +29,11 @@ def ask_ai(text):
             "messages": [
                 {
                     "role": "system",
-                    "content": "Ты дружелюбный кино-бот Пацюк AI 😼. Отвечай на русском."
+                    "content": (
+                        "Ты Пацюк AI 😼 — умный Telegram-бот."
+                        "Отвечай всегда на русском языке."
+                        "Помогай с фильмами, сериалами и обычным общением."
+                    )
                 },
                 {
                     "role": "user",
@@ -40,6 +44,9 @@ def ask_ai(text):
     )
 
     data = response.json()
+
+    if "choices" not in data:
+        return f"Ошибка OpenRouter:\n{data}"
 
     return data["choices"][0]["message"]["content"]
 
@@ -55,7 +62,7 @@ def search_movie(query):
 
     response = requests.get(url, params=params).json()
 
-    if not response["results"]:
+    if not response.get("results"):
         return "Фильм не найден 😿"
 
     movie = response["results"][0]
@@ -82,12 +89,15 @@ def handle_message(update, context):
     if user_id not in authorized_users:
         if text == PASSWORD:
             authorized_users.add(user_id)
+
             update.message.reply_text(
-                "✅ Доступ разрешён.\n\nДобро пожаловать в Пацюк AI 😼"
+                "✅ Доступ разрешён.\n\n"
+                "Добро пожаловать в Пацюк AI 😼"
             )
         else:
             update.message.reply_text(
-                "🔒 Бот закрыт.\n\nВведите пароль:"
+                "🔒 Бот закрыт.\n\n"
+                "Введите пароль:"
             )
         return
 
@@ -104,6 +114,7 @@ def handle_message(update, context):
 
         if isinstance(result, tuple):
             message, poster = result
+
             bot.send_photo(
                 chat_id=update.effective_chat.id,
                 photo=poster,
@@ -118,7 +129,7 @@ def handle_message(update, context):
         query = text.replace("/recommend", "").strip()
 
         answer = ask_ai(
-            f"Порекомендуй фильмы: {query}"
+            f"Порекомендуй фильмы и сериалы похожие на: {query}"
         )
 
         update.message.reply_text(answer)
@@ -137,15 +148,23 @@ dispatcher.add_handler(
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
-    update = Update.de_json(request.get_json(force=True), bot)
+    update = Update.de_json(
+        request.get_json(force=True),
+        bot
+    )
+
     dispatcher.process_update(update)
+
     return "ok"
 
 
 @app.route("/")
 def index():
-    return "Bot is running"
+    return "Пацюк AI работает 😼"
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000)
+    app.run(
+        host="0.0.0.0",
+        port=8000
+    )
