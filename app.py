@@ -1,218 +1,151 @@
-from flask import Flask, request
-import requests
 import os
+import requests
+from flask import Flask, request
+from telegram import Bot, Update
+from telegram.ext import Dispatcher, MessageHandler, Filters
 
+TOKEN = os.environ["BOT_TOKEN"]
+OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
+TMDB_API_KEY = os.environ["TMDB_API_KEY"]
+PASSWORD = os.environ["BOT_PASSWORD"]
+
+bot = Bot(token=TOKEN)
 app = Flask(__name__)
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
-TMDB_API_KEY = os.environ.get("TMDB_API_KEY")
+dispatcher = Dispatcher(bot, None, workers=0)
 
-AUTHORIZED_USERS = set()
-PASSWORD = "paciuk123"
-
-TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+authorized_users = set()
 
 
-def send_message(chat_id, text):
-    requests.post(
-        f"{TELEGRAM_API}/sendMessage",
+def ask_ai(text):
+    response = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json"
+        },
         json={
-            "chat_id": chat_id,
-            "text": text[:4000]
-        }
-    )
-
-
-def send_photo(chat_id, photo, caption):
-    requests.post(
-        f"{TELEGRAM_API}/sendPhoto",
-        json={
-            "chat_id": chat_id,
-            "photo": photo,
-            "caption": caption[:1000]
-        }
-    )
-
-
-def search_movie(query):
-
-    response = requests.get(
-        "https://api.themoviedb.org/3/search/movie",
-        params={
-            "api_key": TMDB_API_KEY,
-            "query": query,
-            "language": "ru-RU"
+            "model": "deepseek/deepseek-v4-flash:free",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "Ты дружелюбный кино-бот Пацюк AI 😼. Отвечай на русском."
+                },
+                {
+                    "role": "user",
+                    "content": text
+                }
+            ]
         }
     )
 
     data = response.json()
 
-    if not data.get("results"):
-        return None
-
-    return data["results"][0]
+    return data["choices"][0]["message"]["content"]
 
 
-@app.route("/", methods=["GET"])
-def home():
-    return "Bot is running!"
+def search_movie(query):
+    url = "https://api.themoviedb.org/3/search/movie"
+
+    params = {
+        "api_key": TMDB_API_KEY,
+        "query": query,
+        "language": "ru-RU"
+    }
+
+    response = requests.get(url, params=params).json()
+
+    if not response["results"]:
+        return "Фильм не найден 😿"
+
+    movie = response["results"][0]
+
+    title = movie.get("title", "Без названия")
+    overview = movie.get("overview", "Нет описания")
+    rating = movie.get("vote_average", "—")
+
+    poster_path = movie.get("poster_path")
+
+    text = f"🎬 {title}\n⭐ Рейтинг: {rating}\n\n{overview}"
+
+    if poster_path:
+        poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}"
+        return text, poster_url
+
+    return text, None
 
 
-@app.route("/", methods=["POST"])
-def webhook():
+def handle_message(update, context):
+    user_id = update.message.from_user.id
+    text = update.message.text
 
-    data = request.json
-
-    try:
-        message = data["message"]["text"]
-        chat_id = data["message"]["chat"]["id"]
-        user_id = data["message"]["from"]["id"]
-
-        # Авторизация
-        if user_id not in AUTHORIZED_USERS:
-
-            if message == PASSWORD:
-
-                AUTHORIZED_USERS.add(user_id)
-
-                send_message(
-                    chat_id,
-                    "✅ Доступ разрешён.\n\nДобро пожаловать в Пацюк AI 😼"
-                )
-
-                return "ok"
-
-            send_message(
-                chat_id,
+    if user_id not in authorized_users:
+        if text == PASSWORD:
+            authorized_users.add(user_id)
+            update.message.reply_text(
+                "✅ Доступ разрешён.\n\nДобро пожаловать в Пацюк AI 😼"
+            )
+        else:
+            update.message.reply_text(
                 "🔒 Бот закрыт.\n\nВведите пароль:"
             )
+        return
 
-            return "ok"
+    if text.startswith("/movie"):
+        query = text.replace("/movie", "").strip()
 
-        lower = message.lower()
-
-        # ===== ПОИСК ФИЛЬМА =====
-        if lower.startswith("/movie "):
-
-            query = message.replace("/movie ", "")
-
-            movie = search_movie(query)
-
-            if not movie:
-                send_message(chat_id, "Фильм не найден 😿")
-                return "ok"
-
-            title = movie.get("title", "Без названия")
-            overview = movie.get("overview", "Нет описания")
-            rating = movie.get("vote_average", "?")
-            date = movie.get("release_date", "")
-            poster = movie.get("poster_path")
-
-            text = (
-                f"🎬 {title}\n\n"
-                f"⭐ Рейтинг: {rating}\n"
-                f"📅 Год: {date[:4]}\n\n"
-                f"{overview}"
+        if not query:
+            update.message.reply_text(
+                "Напиши название фильма после команды 😼"
             )
+            return
 
-            if poster:
+        result = search_movie(query)
 
-                photo_url = f"https://image.tmdb.org/t/p/w500{poster}"
-
-                send_photo(chat_id, photo_url, text)
-
-            else:
-                send_message(chat_id, text)
-
-            return "ok"
-
-        # ===== AI РЕКОМЕНДАЦИИ =====
-        if lower.startswith("/recommend"):
-
-            prompt = (
-                "Порекомендуй фильмы.\n"
-                f"Запрос пользователя: {message}"
+        if isinstance(result, tuple):
+            message, poster = result
+            bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=poster,
+                caption=message
             )
-
-            response = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": "deepseek/deepseek-v4-flash:free",
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "Ты эксперт по фильмам. "
-                                "Отвечай только на русском языке."
-                            )
-                        },
-                        {
-                            "role": "user",
-                            "content": prompt
-                        }
-                    ]
-                }
-            )
-
-            result = response.json()
-
-            if "choices" in result:
-                answer = result["choices"][0]["message"]["content"]
-            else:
-                answer = str(result)
-
-            send_message(chat_id, answer)
-
-            return "ok"
-
-        # ===== ОБЫЧНЫЙ AI ЧАТ =====
-        response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "deepseek/deepseek-v4-flash:free",
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "Ты дружелюбный AI кот по имени Пацюк. "
-                            "Всегда отвечай только на русском языке."
-                        )
-                    },
-                    {
-                        "role": "user",
-                        "content": message
-                    }
-                ]
-            }
-        )
-
-        result = response.json()
-
-        if "choices" in result:
-            answer = result["choices"][0]["message"]["content"]
         else:
-            answer = str(result)
+            update.message.reply_text(result)
 
-        send_message(chat_id, answer)
+        return
 
-    except Exception as e:
+    if text.startswith("/recommend"):
+        query = text.replace("/recommend", "").strip()
 
-        send_message(
-            chat_id,
-            f"Ошибка 😿\n{str(e)}"
+        answer = ask_ai(
+            f"Порекомендуй фильмы: {query}"
         )
 
+        update.message.reply_text(answer)
+
+        return
+
+    answer = ask_ai(text)
+
+    update.message.reply_text(answer)
+
+
+dispatcher.add_handler(
+    MessageHandler(Filters.text & ~Filters.command, handle_message)
+)
+
+
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), bot)
+    dispatcher.process_update(update)
     return "ok"
 
 
+@app.route("/")
+def index():
+    return "Bot is running"
+
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    app.run(host="0.0.0.0", port=8000)
